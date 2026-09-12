@@ -42,14 +42,14 @@ type VisitRepository interface {
 	// FindByID 根据 ID 查询拜访
 	FindByID(id uuid.UUID) (*model.Visit, error)
 
+	// FindByMRAndTimeRange 查询指定 MR 时间范围内的拜访。
+	FindByMRAndTimeRange(mrID uuid.UUID, startTime, endTime string) ([]*model.Visit, error)
+
 	// MonthlyProductStats 按签退月份查询产品拜访聚合统计。
 	MonthlyProductStats(start, end time.Time) ([]MonthlyProductStat, error)
 
 	// Update 更新拜访
 	Update(visit *model.Visit) error
-
-	// FindByMRAndTimeRange 查询某 MR 在指定时间范围内的拜访
-	FindByMRAndTimeRange(mrID uuid.UUID, startTime, endTime string) ([]*model.Visit, error)
 }
 
 // MasterDataRepository 主数据仓储接口

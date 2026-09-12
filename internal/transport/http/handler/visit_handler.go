@@ -140,6 +140,28 @@ func (h *VisitHandler) CheckOut(c *gin.Context) {
 	response.Success(c, dto.ToVisitResponse(visit))
 }
 
+// ListVisits 获取拜访列表。
+// GET /api/v1/visits?mr_id=...&start_time=...&end_time=...
+func (h *VisitHandler) ListVisits(c *gin.Context) {
+	mrID, err := dto.ParseUUID(c.Query("mr_id"))
+	if err != nil {
+		response.BadRequest(c, "MR ID 格式不正确", err.Error())
+		return
+	}
+	startTime := c.DefaultQuery("start_time", "2000-01-01T00:00:00Z")
+	endTime := c.DefaultQuery("end_time", "2100-01-01T00:00:00Z")
+	visits, err := h.visitService.ListVisits(mrID, startTime, endTime)
+	if err != nil {
+		h.handleServiceError(c, err)
+		return
+	}
+	items := make([]*dto.VisitResponse, 0, len(visits))
+	for _, visit := range visits {
+		items = append(items, dto.ToVisitResponse(visit))
+	}
+	response.Success(c, items)
+}
+
 // GetVisit 获取拜访详情
 // GET /api/v1/visits/:id
 func (h *VisitHandler) GetVisit(c *gin.Context) {

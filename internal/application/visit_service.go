@@ -327,6 +327,15 @@ func mergeAnomalyReasons(existing, additions model.AnomalyReasons) model.Anomaly
 	return result
 }
 
+// ListVisits 查询指定 MR 时间范围内的拜访列表。
+func (s *VisitService) ListVisits(mrID uuid.UUID, startTime, endTime string) ([]*model.Visit, error) {
+	visits, err := s.visitRepo.FindByMRAndTimeRange(mrID, startTime, endTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list visits: %w", err)
+	}
+	return visits, nil
+}
+
 // GetVisitByID 根据 ID 获取拜访详情
 func (s *VisitService) GetVisitByID(id uuid.UUID) (*model.Visit, error) {
 	visit, err := s.visitRepo.FindByID(id)

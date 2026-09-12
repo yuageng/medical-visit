@@ -201,12 +201,19 @@ func (r *visitRepositoryImpl) Update(visit *model.Visit) error {
 	return nil
 }
 
-// FindByMRAndTimeRange 查询某 MR 在指定时间范围内的拜访
+// FindByMRAndTimeRange 查询某 MR 在指定时间范围内的拜访。
 func (r *visitRepositoryImpl) FindByMRAndTimeRange(mrID uuid.UUID, startTime, endTime string) ([]*model.Visit, error) {
 	var visits []*model.Visit
 	err := r.db.
+		Preload("MR").
+		Preload("HCP").
+		Preload("Hospital").
+		Preload("Department").
+		Preload("Product").
+		Preload("CallReport").
+		Preload("CallReport.Materials").
 		Where("mr_id = ? AND planned_start_at >= ? AND planned_start_at < ?", mrID, startTime, endTime).
-		Order("planned_start_at ASC").
+		Order("planned_start_at DESC").
 		Find(&visits).Error
 
 	if err != nil {

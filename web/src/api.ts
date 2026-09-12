@@ -15,6 +15,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  health: () => request<{ status: string }>('/healthz'),
+  listVisits: (mrId: string) => request<Visit[]>(`/api/v1/visits?mr_id=${encodeURIComponent(mrId)}`),
   createVisit: (payload: CreateVisitRequest) => request<Visit>('/api/v1/visits', { method: 'POST', body: JSON.stringify(payload) }),
   getVisit: (id: string) => request<Visit>(`/api/v1/visits/${id}`),
   checkIn: (id: string, payload: CheckInRequest) => request<Visit>(`/api/v1/visits/${id}/check-in`, { method: 'POST', body: JSON.stringify(payload) }),
