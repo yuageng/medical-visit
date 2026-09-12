@@ -32,6 +32,9 @@ func SetupRouterWithDependencies(db *gorm.DB, complianceRules ...compliance.Rule
 	router.GET("/healthz", func(c *gin.Context) {
 		response.Success(c, gin.H{"status": "healthy"})
 	})
+	router.GET("/api/v1/ping", func(c *gin.Context) {
+		response.Success(c, gin.H{"message": "pong"})
+	})
 
 	visitRepo := persistence.NewVisitRepository(db)
 	masterDataRepo := persistence.NewMasterDataRepository(db)

@@ -36,7 +36,9 @@
 └── README.md
 ```
 
-## 一键部署
+## 运行方式一：Docker 一键启动（推荐）
+
+该方式会同时运行 PostgreSQL 数据库、Go 后端 API 和 React 前端，不需要分别启动后端和前端服务。
 
 环境要求：已安装并启动 Docker Desktop，以及支持 Compose v2 的 Docker Compose。
 
@@ -46,18 +48,27 @@
 docker compose up -d --build
 ```
 
+确认三个服务均已运行：
+
+```bash
+docker compose ps
+```
+
 启动完成后访问：
 
 - 前端：http://localhost
 - 后端健康检查：http://localhost/healthz
 - API Ping：http://localhost/api/v1/ping
 
-查看服务状态和日志：
+查看全部服务日志，或只查看后端/前端日志：
 
 ```bash
-docker compose ps
+docker compose logs -f
 docker compose logs -f api
+docker compose logs -f web
 ```
+
+说明：前端容器通过 Nginx 对外提供页面，并将 `/api` 请求代理给后端容器；API 会等待数据库健康后启动，并自动执行数据库表结构迁移。
 
 停止服务但保留数据库数据：
 
@@ -105,27 +116,91 @@ docker compose up -d --build
 
 首次启动时，API 会在 PostgreSQL 健康后启动，并通过 `AUTO_MIGRATE=true` 自动创建或更新业务表结构。数据存储在 Docker volume `postgres_data` 中。
 
-## 本地开发
+## 运行方式二：本地运行后端和前端
 
-### 启动 PostgreSQL
+该方式适合开发和完整链路调试。需要一个数据库容器，并保持后端、前端两个终端同时运行。
 
-可以只启动数据库：
+### 0. 前置检查
+
+在项目根目录确认开发工具可用：
+
+```bash
+docker --version
+docker compose version
+go version
+node --version
+npm --version
+```
+
+如果 Homebrew 安装的 Docker CLI 与 Docker Desktop Engine 出现 API 版本不匹配，可直接使用 Docker Desktop 自带命令：
+
+```bash
+/Applications/Docker.app/Contents/Resources/bin/docker compose version
+```
+
+### 1. 启动 PostgreSQL
+
+在项目根目录只启动数据库容器：
 
 ```bash
 docker compose up -d db
+docker compose ps db
 ```
 
-### 启动后端
+等待状态显示为 `healthy`。数据库通过宿主机 `localhost:5432` 暴露给本地后端。
 
-确保本地环境变量中的 `DB_HOST` 为 `localhost`，再执行：
+如果本机 `5432` 已被其他 PostgreSQL 占用，可改用：
 
 ```bash
-AUTO_MIGRATE=true go run ./cmd/api
+DB_EXPOSE_PORT=15432 docker compose up -d db
 ```
 
-后端默认监听 `http://localhost:8080`。
+后续启动后端时相应设置 `DB_PORT=15432`。
 
-### 启动前端
+### 2. 终端一：启动后端 API
+
+在项目根目录执行：
+
+```bash
+DB_HOST=localhost \
+DB_PORT=5432 \
+DB_USER=medical_visit \
+DB_PASSWORD=medical_visit_password \
+DB_NAME=medical_visit \
+DB_SSLMODE=disable \
+AUTO_MIGRATE=true \
+go run ./cmd/api
+```
+
+后端默认监听 `http://localhost:8080`。看到 `Server is listening on 0.0.0.0:8080` 后保持该终端运行。
+
+若上一步使用了 `15432`，这里将 `DB_PORT` 改为 `15432`。
+
+### 3. 导入前端演示主数据
+
+首次启动或重建数据库后，在项目根目录新开一个终端执行：
+
+```bash
+docker compose exec -T db psql \
+  -U medical_visit \
+  -d medical_visit \
+  < scripts/seed_demo.sql
+```
+
+该脚本可重复执行。它会写入与前端选择项 UUID 一致的 MR、医院、科室、医生、产品和学术资料；医院坐标为 `31.2304, 121.4737`。
+
+验证主数据：
+
+```bash
+docker compose exec db psql \
+  -U medical_visit \
+  -d medical_visit \
+  -c "SELECT id, name FROM products ORDER BY name;"
+```
+
+### 4. 终端二：启动前端开发服务
+
+在第二个长期运行的终端执行：
 
 ```bash
 cd web
@@ -133,7 +208,30 @@ npm ci
 npm run dev
 ```
 
-前端开发服务器默认运行在 `http://localhost:5173`，并将 `/api` 请求代理到本地后端 `8080` 端口。
+前端默认运行在 `http://localhost:5173`，Vite 会将 `/api` 请求代理到本地后端 `http://localhost:8080`。保持该终端运行。
+
+### 5. 确认三个组件均正常
+
+```bash
+# 数据库应显示 healthy
+docker compose ps db
+
+# 后端健康检查
+curl -i http://localhost:8080/healthz
+
+# 前端页面响应
+curl -I http://localhost:5173
+```
+
+预期后端返回 HTTP `200` 和 `status: healthy`，前端返回 HTTP `200`。
+
+### 6. 停止本地服务
+
+前端和后端终端分别按 `Ctrl+C`，然后停止数据库：
+
+```bash
+docker compose stop db
+```
 
 ## API 概览
 
@@ -151,22 +249,165 @@ npm run dev
 
 ## 测试与构建
 
+### 后端测试
+
 在项目根目录执行：
 
 ```bash
-# 运行后端测试
+# 运行全部 Go 单元测试
 go test ./...
 
-# 运行竞态检测和覆盖率
+# 运行竞态检测并生成覆盖率文件
 go test -race -coverprofile=coverage.out ./...
 
-# 编译后端
- go build ./cmd/api
+# 查看覆盖率报告
+go tool cover -html=coverage.out
 
-# 构建前端
-cd web
+# 静态检查
+go vet ./...
+```
+
+### 前端构建测试
+
+在 [`web`](web) 目录执行：
+
+```bash
 npm ci
 npm run build
+```
+
+### 后端完整链路验证
+
+先确认 [`scripts/seed_demo.sql`](scripts/seed_demo.sql) 已导入，然后在项目根目录执行以下步骤。所有操作必须使用创建接口返回的真实 UUID，不要使用 `demo-visit-001`。
+
+#### 1. 健康检查
+
+```bash
+curl -s http://localhost:8080/healthz | python3 -m json.tool
+```
+
+#### 2. 创建拜访并保存真实 ID
+
+```bash
+PLAN_TIME=$(date -u -v+10M '+%Y-%m-%dT%H:%M:%SZ')
+
+curl -sS -o /tmp/medical-visit-create.json \
+  -w 'HTTP %{http_code}\n' \
+  -X POST http://localhost:8080/api/v1/visits \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"mr_id\": \"00000000-0000-0000-0000-000000000001\",
+    \"hcp_id\": \"00000000-0000-0000-0000-000000000004\",
+    \"hospital_id\": \"00000000-0000-0000-0000-000000000002\",
+    \"department_id\": \"00000000-0000-0000-0000-000000000003\",
+    \"product_id\": \"00000000-0000-0000-0000-000000000005\",
+    \"planned_start_at\": \"${PLAN_TIME}\",
+    \"plan_note\": \"完整链路验证：沟通最新临床证据\"
+  }"
+
+cat /tmp/medical-visit-create.json | python3 -m json.tool
+VISIT_ID=$(python3 -c 'import json; print(json.load(open("/tmp/medical-visit-create.json"))["data"]["id"])')
+echo "VISIT_ID=${VISIT_ID}"
+```
+
+预期 HTTP `201`，状态为 `PLANNED`。
+
+#### 3. 签到
+
+```bash
+CHECK_IN_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+curl -sS -X POST "http://localhost:8080/api/v1/visits/${VISIT_ID}/check-in" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"latitude\": 31.2304,
+    \"longitude\": 121.4737,
+    \"check_in_time\": \"${CHECK_IN_TIME}\"
+  }" | python3 -m json.tool
+```
+
+预期状态为 `CHECKED_IN`，签到距离接近 0 米。
+
+#### 4. 签退并验证合规结果
+
+立即签退会因默认最短时长为 300 秒而得到 `NON_COMPLIANT` 和 `DURATION_TOO_SHORT`，这正好可以验证异常规则：
+
+```bash
+CHECK_OUT_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+curl -sS -X POST "http://localhost:8080/api/v1/visits/${VISIT_ID}/check-out" \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"latitude\": 31.2304,
+    \"longitude\": 121.4737,
+    \"check_out_time\": \"${CHECK_OUT_TIME}\"
+  }" | python3 -m json.tool
+```
+
+预期状态为 `CHECKED_OUT`，合规状态为 `NON_COMPLIANT`。若要快速验证正常结果，可使用 `COMPLIANCE_MIN_DURATION_SECONDS=0` 重启本地后端后重新创建一条拜访。
+
+#### 5. 提交 Call Report
+
+```bash
+curl -sS -X POST "http://localhost:8080/api/v1/visits/${VISIT_ID}/report" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "conversation_summary": "介绍最新临床证据和标准用药路径",
+    "doctor_feedback": "医生关注长期用药的安全性数据",
+    "materials_distributed": true,
+    "material_ids": ["00000000-0000-0000-0000-000000000007"],
+    "additional_notes": "下次跟进真实世界研究数据"
+  }' | python3 -m json.tool
+```
+
+预期返回 `SUCCESS`。报告保存后拜访状态会变为 `COMPLETED`。
+
+#### 6. 查询详情与月度看板
+
+```bash
+curl -sS "http://localhost:8080/api/v1/visits/${VISIT_ID}" \
+  | python3 -m json.tool
+
+MONTH=$(date '+%Y-%m')
+curl -sS "http://localhost:8080/api/v1/dashboard/visits/monthly?month=${MONTH}" \
+  | python3 -m json.tool
+```
+
+预期详情状态为 `COMPLETED`，看板中“心宁平”的拜访次数增加。
+
+### 前端完整链路验证
+
+确保数据库、后端和前端均已运行，并已导入 [`scripts/seed_demo.sql`](scripts/seed_demo.sql)，然后执行：
+
+1. 浏览器打开 `http://localhost:5173`。
+2. 打开开发者工具的 Network 面板，筛选 `Fetch/XHR`，便于确认所有请求均返回成功。
+3. 点击左侧“创建拜访”。不要从初始“拜访列表”或“异常样例”开始，因为其中的 `demo-visit-001`、`demo-visit-002` 只是前端展示数据，不存在于数据库。
+4. 选择默认 MR、医生、医院、科室和“心宁平”，将计划时间设置为当前时间之后，填写拜访目标，点击“创建拜访”。
+5. 确认页面提示“拜访计划已创建”，详情状态为“已计划”；Network 中 `POST /api/v1/visits` 应返回 HTTP `201`。
+6. 在详情页保持默认签到坐标 `31.2304, 121.4737`，点击“现场签到”；状态应变为“已签到”，`POST .../check-in` 返回 HTTP `200`。
+7. 点击“去签退”，保持默认坐标并确认签退；`POST .../check-out` 返回 HTTP `200`。立即签退时出现“异常/停留时长不足 5 分钟”是默认合规规则的预期结果，不代表链路失败。
+8. 返回详情后点击“填写 Call Report”，填写“谈话要点”和可选反馈。若勾选派发资料，当前前端不会填写资料 UUID，因此建议浏览器链路验证时暂不勾选；然后提交报告。
+9. 确认出现“Call Report 已保存”，Network 中 `POST .../report` 返回 HTTP `200`。
+10. 点击“月度 Dashboard”，月份选择当前月份，确认产品拜访统计增加且页面没有“后端 Dashboard 暂未连接”提示。
+11. 如需确认最终数据库状态，可执行：
+
+```bash
+docker compose exec db psql \
+  -U medical_visit \
+  -d medical_visit \
+  -c "SELECT id, status, compliance_status, duration_seconds FROM visits ORDER BY created_at DESC LIMIT 5;"
+```
+
+### Docker 部署验证
+
+如果使用 Docker 一键启动，执行：
+
+```bash
+docker compose ps
+docker compose logs --tail=100 api
+docker compose logs --tail=100 web
+curl http://localhost/healthz
+curl http://localhost/api/v1/ping
 ```
 
 项目也提供了 [`Makefile`](Makefile)，可使用 `make help` 查看常用命令。
