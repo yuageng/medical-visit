@@ -15,7 +15,8 @@ import (
 type mockVisitRepository struct {
 	createFunc               func(*model.Visit) error
 	checkInFunc              func(uuid.UUID, int, *model.Visit) error
-	saveCallReportFunc       func(uuid.UUID, *model.CallReport, []uuid.UUID) error
+	checkOutFunc             func(uuid.UUID, int, *model.Visit) error
+	saveCallReportFunc       func(uuid.UUID, int, *model.CallReport, []uuid.UUID) error
 	findByIDFunc             func(uuid.UUID) (*model.Visit, error)
 	updateFunc               func(*model.Visit) error
 	findByMRAndTimeRangeFunc func(uuid.UUID, string, string) ([]*model.Visit, error)
@@ -39,9 +40,19 @@ func (m *mockVisitRepository) CheckIn(visitID uuid.UUID, expectedVersion int, vi
 	return nil
 }
 
-func (m *mockVisitRepository) SaveCallReport(visitID uuid.UUID, report *model.CallReport, materialIDs []uuid.UUID) error {
+func (m *mockVisitRepository) CheckOut(visitID uuid.UUID, expectedVersion int, visit *model.Visit) error {
+	if m.checkOutFunc != nil {
+		return m.checkOutFunc(visitID, expectedVersion, visit)
+	}
+	if m.updateFunc != nil {
+		return m.updateFunc(visit)
+	}
+	return nil
+}
+
+func (m *mockVisitRepository) SaveCallReport(visitID uuid.UUID, expectedVersion int, report *model.CallReport, materialIDs []uuid.UUID) error {
 	if m.saveCallReportFunc != nil {
-		return m.saveCallReportFunc(visitID, report, materialIDs)
+		return m.saveCallReportFunc(visitID, expectedVersion, report, materialIDs)
 	}
 	return nil
 }

@@ -43,5 +43,11 @@ func ToReportResponse(report *model.CallReport) *ReportResponse {
 	if report == nil {
 		return nil
 	}
-	return &ReportResponse{ID: report.ID.String(), VisitID: report.VisitID.String(), ConversationSummary: report.DiscussionSummary, DoctorFeedback: report.HCPFeedback, MaterialsDistributed: report.MaterialsDistributed, AdditionalNotes: report.AdditionalNotes, CreatedAt: report.CreatedAt, UpdatedAt: report.UpdatedAt}
+	materialIDs := make([]string, 0, len(report.Materials))
+	for _, material := range report.Materials {
+		if material != nil {
+			materialIDs = append(materialIDs, material.ID.String())
+		}
+	}
+	return &ReportResponse{ID: report.ID.String(), VisitID: report.VisitID.String(), ConversationSummary: report.DiscussionSummary, DoctorFeedback: report.HCPFeedback, MaterialsDistributed: report.MaterialsDistributed, MaterialIDs: materialIDs, AdditionalNotes: report.AdditionalNotes, CreatedAt: report.CreatedAt, UpdatedAt: report.UpdatedAt}
 }

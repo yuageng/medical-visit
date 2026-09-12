@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"medical-visit/internal/application"
@@ -28,7 +29,11 @@ func (h *DashboardHandler) MonthlyVisitsByProduct(c *gin.Context) {
 	}
 	items, err := h.service.MonthlyVisitsByProduct(month)
 	if err != nil {
-		response.BadRequest(c, "month 参数格式应为 YYYY-MM", err.Error())
+		if errors.Is(err, application.ErrInvalidDashboardMonth) {
+			response.BadRequest(c, "month 参数格式应为 YYYY-MM", err.Error())
+		} else {
+			response.InternalServerError(c, "Dashboard 统计查询失败")
+		}
 		return
 	}
 	c.JSON(http.StatusOK, response.Response{

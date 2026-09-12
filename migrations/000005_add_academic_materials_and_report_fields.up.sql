@@ -1,6 +1,10 @@
 ALTER TABLE call_reports
     ADD COLUMN IF NOT EXISTS additional_notes TEXT;
 
+-- 学术资料改由结构化关联表维护，不再要求旧的自由文本说明。
+ALTER TABLE call_reports
+    DROP CONSTRAINT IF EXISTS chk_call_reports_material_note;
+
 CREATE TABLE IF NOT EXISTS academic_materials (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     code VARCHAR(100) NOT NULL UNIQUE,

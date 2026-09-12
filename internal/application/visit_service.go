@@ -42,6 +42,12 @@ var (
 	ErrInvalidCheckInTime = errors.New("check-in time is invalid")
 	// ErrInvalidCheckInGPS 签到 GPS 非法
 	ErrInvalidCheckInGPS = errors.New("check-in GPS is invalid")
+	// ErrVisitCannotCheckOut 拜访当前状态不允许签退
+	ErrVisitCannotCheckOut = errors.New("visit status does not allow check-out")
+	// ErrInvalidCheckOutTime 签退时间为空或早于签到时间
+	ErrInvalidCheckOutTime = errors.New("check-out time is invalid")
+	// ErrInvalidCheckOutGPS 签退 GPS 非法
+	ErrInvalidCheckOutGPS = errors.New("check-out GPS is invalid")
 )
 
 // VisitService 拜访应用服务
@@ -238,6 +244,87 @@ func (s *VisitService) CheckIn(input CheckInInput) (*model.Visit, error) {
 		return nil, err
 	}
 	return s.visitRepo.FindByID(visit.ID)
+}
+
+// CheckOutInput 签退输入。
+type CheckOutInput struct {
+	VisitID      uuid.UUID
+	Latitude     float64
+	Longitude    float64
+	CheckOutTime time.Time
+}
+
+// CheckOut 仅允许已签到拜访签退，并原子保存最终合规结果。
+func (s *VisitService) CheckOut(input CheckOutInput) (*model.Visit, error) {
+	visit, err := s.visitRepo.FindByID(input.VisitID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find visit: %w", err)
+	}
+	if visit == nil {
+		return nil, ErrVisitNotFound
+	}
+	if visit.Status != model.VisitStatusCheckedIn || visit.CheckedInAt == nil {
+		return nil, ErrVisitCannotCheckOut
+	}
+	if input.CheckOutTime.IsZero() || input.CheckOutTime.Before(*visit.CheckedInAt) {
+		return nil, ErrInvalidCheckOutTime
+	}
+	coordinate := compliance.Coordinate{Latitude: input.Latitude, Longitude: input.Longitude}
+	if err := coordinate.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidCheckOutGPS, err)
+	}
+	if visit.Hospital == nil || visit.Hospital.Latitude == nil || visit.Hospital.Longitude == nil {
+		return nil, ErrHospitalCoordinatesMissing
+	}
+	distance, err := compliance.HaversineDistanceMeters(coordinate, compliance.Coordinate{
+		Latitude: *visit.Hospital.Latitude, Longitude: *visit.Hospital.Longitude,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to calculate check-out distance: %w", err)
+	}
+	duration := int(input.CheckOutTime.Sub(*visit.CheckedInAt).Seconds())
+	result, err := s.compliance.ValidateCheckOut(compliance.CheckOutInput{
+		DurationSeconds: duration, CheckOutDistanceM: distance,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to validate check-out: %w", err)
+	}
+	checkedOutAt := input.CheckOutTime.UTC()
+	visit.CheckedOutAt = &checkedOutAt
+	visit.CheckOutLatitude = &input.Latitude
+	visit.CheckOutLongitude = &input.Longitude
+	visit.CheckOutDistanceM = &distance
+	visit.DurationSeconds = &duration
+	visit.Status = model.VisitStatusCheckedOut
+	visit.AnomalyReasons = mergeAnomalyReasons(visit.AnomalyReasons, result.AnomalyReasons)
+	if len(visit.AnomalyReasons) > 0 {
+		visit.ComplianceStatus = model.ComplianceStatusNonCompliant
+	} else {
+		visit.ComplianceStatus = model.ComplianceStatusCompliant
+	}
+	visit.UpdatedAt = s.clock.Now().UTC()
+	if err := s.visitRepo.CheckOut(visit.ID, visit.Version, visit); err != nil {
+		if errors.Is(err, repository.ErrVisitStateConflict) {
+			return nil, ErrVisitCannotCheckOut
+		}
+		return nil, err
+	}
+	return s.visitRepo.FindByID(visit.ID)
+}
+
+func mergeAnomalyReasons(existing, additions model.AnomalyReasons) model.AnomalyReasons {
+	result := append(model.AnomalyReasons{}, existing...)
+	seen := make(map[model.AnomalyReason]struct{}, len(result))
+	for _, reason := range result {
+		seen[reason] = struct{}{}
+	}
+	for _, reason := range additions {
+		if _, exists := seen[reason]; !exists {
+			result = append(result, reason)
+			seen[reason] = struct{}{}
+		}
+	}
+	return result
 }
 
 // GetVisitByID 根据 ID 获取拜访详情

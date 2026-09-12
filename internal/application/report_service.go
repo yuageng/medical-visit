@@ -14,9 +14,11 @@ import (
 
 var (
 	ErrReportNotAllowed            = errors.New("visit status does not allow call report")
+	ErrReportConflict              = errors.New("call report was concurrently modified")
 	ErrConversationSummaryRequired = errors.New("conversation summary is required")
 	ErrMaterialNotFound            = errors.New("academic material not found")
 	ErrMaterialNotActive           = errors.New("academic material is not active")
+	ErrDuplicateMaterialID         = errors.New("duplicate academic material id")
 )
 
 type SaveReportInput struct {
@@ -55,6 +57,13 @@ func (s *ReportService) SaveReport(input SaveReportInput) (*model.CallReport, er
 	if !input.MaterialsDistributed && len(input.MaterialIDs) > 0 {
 		return nil, errors.New("material_ids require materials_distributed=true")
 	}
+	seenMaterialIDs := make(map[uuid.UUID]struct{}, len(input.MaterialIDs))
+	for _, materialID := range input.MaterialIDs {
+		if _, exists := seenMaterialIDs[materialID]; exists {
+			return nil, ErrDuplicateMaterialID
+		}
+		seenMaterialIDs[materialID] = struct{}{}
+	}
 	materials, err := s.masterRepo.FindAcademicMaterialsByIDs(input.MaterialIDs)
 	if err != nil {
 		return nil, fmt.Errorf("find academic materials: %w", err)
@@ -73,7 +82,13 @@ func (s *ReportService) SaveReport(input SaveReportInput) (*model.CallReport, er
 		HCPFeedback: input.DoctorFeedback, MaterialsDistributed: input.MaterialsDistributed,
 		AdditionalNotes: input.AdditionalNotes, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := s.visitRepo.SaveCallReport(input.VisitID, report, input.MaterialIDs); err != nil {
+	if err := s.visitRepo.SaveCallReport(input.VisitID, visit.Version, report, input.MaterialIDs); err != nil {
+		if errors.Is(err, repository.ErrVisitStateConflict) {
+			return nil, ErrReportConflict
+		}
+		if errors.Is(err, repository.ErrMaterialStateConflict) {
+			return nil, ErrMaterialNotActive
+		}
 		return nil, fmt.Errorf("save call report: %w", err)
 	}
 	visit, err = s.visitRepo.FindByID(input.VisitID)

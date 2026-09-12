@@ -12,6 +12,8 @@ import (
 var (
 	// ErrVisitStateConflict 表示拜访状态或版本已被其他请求修改。
 	ErrVisitStateConflict = errors.New("visit state conflict")
+	// ErrMaterialStateConflict 表示学术资料在保存报告前已失效。
+	ErrMaterialStateConflict = errors.New("academic material state conflict")
 )
 
 // MonthlyProductStat 是数据库聚合后的产品月度统计结果。
@@ -31,8 +33,11 @@ type VisitRepository interface {
 	// CheckIn 在期望状态和版本下原子写入签到信息。
 	CheckIn(visitID uuid.UUID, expectedVersion int, visit *model.Visit) error
 
-	// SaveCallReport 创建或更新拜访记录，并同步资料关联及拜访状态。
-	SaveCallReport(visitID uuid.UUID, report *model.CallReport, materialIDs []uuid.UUID) error
+	// CheckOut 在期望状态和版本下原子写入签退及最终合规信息。
+	CheckOut(visitID uuid.UUID, expectedVersion int, visit *model.Visit) error
+
+	// SaveCallReport 在期望版本下创建或更新拜访记录，并同步资料关联及拜访状态。
+	SaveCallReport(visitID uuid.UUID, expectedVersion int, report *model.CallReport, materialIDs []uuid.UUID) error
 
 	// FindByID 根据 ID 查询拜访
 	FindByID(id uuid.UUID) (*model.Visit, error)

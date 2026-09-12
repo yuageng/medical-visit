@@ -52,6 +52,7 @@ func SetupRouterWithDependencies(db *gorm.DB, complianceRules ...compliance.Rule
 
 	legacyVisits := router.Group("/api/visits")
 	legacyVisits.POST("/:id/check-in", visitHandler.CheckIn)
+	legacyVisits.POST("/:id/check-out", visitHandler.CheckOut)
 	legacyVisits.POST("/:id/report", visitHandler.SaveReport)
 	legacyDashboard := router.Group("/api/dashboard")
 	legacyDashboard.GET("/visits/monthly", dashboardHandler.MonthlyVisitsByProduct)
@@ -61,6 +62,7 @@ func SetupRouterWithDependencies(db *gorm.DB, complianceRules ...compliance.Rule
 	visits.POST("", visitHandler.CreateVisit)
 	visits.GET("/:id", visitHandler.GetVisit)
 	visits.POST("/:id/check-in", visitHandler.CheckIn)
+	visits.POST("/:id/check-out", visitHandler.CheckOut)
 	visits.POST("/:id/report", visitHandler.SaveReport)
 	v1Dashboard := v1.Group("/dashboard")
 	v1Dashboard.GET("/visits/monthly", dashboardHandler.MonthlyVisitsByProduct)

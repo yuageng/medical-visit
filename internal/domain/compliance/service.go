@@ -11,16 +11,20 @@ import (
 
 // Rules 合规规则配置。
 type Rules struct {
-	MaxDistanceMeters float64
+	MinDurationSeconds int
+	MaxDistanceMeters  float64
 }
 
-// DefaultRules 返回签到阶段的默认规则。
+// DefaultRules 返回拜访合规校验的默认规则。
 func DefaultRules() Rules {
-	return Rules{MaxDistanceMeters: 500}
+	return Rules{MinDurationSeconds: 300, MaxDistanceMeters: 500}
 }
 
 // Validate 校验规则配置。
 func (r Rules) Validate() error {
+	if r.MinDurationSeconds < 0 {
+		return errors.New("min duration must be non-negative")
+	}
 	if math.IsNaN(r.MaxDistanceMeters) || math.IsInf(r.MaxDistanceMeters, 0) || r.MaxDistanceMeters < 0 {
 		return errors.New("max distance must be a finite non-negative number")
 	}
@@ -68,6 +72,32 @@ func (s *Service) ValidateCheckIn(input CheckInInput) (CheckInResult, error) {
 	if input.CheckInDistanceM > s.rules.MaxDistanceMeters {
 		result.Status = model.ComplianceStatusNonCompliant
 		result.AnomalyReasons = append(result.AnomalyReasons, model.ReasonCheckInTooFar)
+	}
+	return result, nil
+}
+
+// CheckOutInput 签退阶段的合规输入。
+type CheckOutInput struct {
+	DurationSeconds   int
+	CheckOutDistanceM float64
+}
+
+// ValidateCheckOut 评估签退时长与位置；恰好达到阈值视为合规。
+func (s *Service) ValidateCheckOut(input CheckOutInput) (CheckInResult, error) {
+	if input.DurationSeconds < 0 {
+		return CheckInResult{}, errors.New("duration must be non-negative")
+	}
+	if math.IsNaN(input.CheckOutDistanceM) || math.IsInf(input.CheckOutDistanceM, 0) || input.CheckOutDistanceM < 0 {
+		return CheckInResult{}, errors.New("check-out distance must be a finite non-negative number")
+	}
+	result := CheckInResult{Status: model.ComplianceStatusCompliant, AnomalyReasons: model.AnomalyReasons{}}
+	if input.DurationSeconds < s.rules.MinDurationSeconds {
+		result.Status = model.ComplianceStatusNonCompliant
+		result.AnomalyReasons = append(result.AnomalyReasons, model.ReasonDurationTooShort)
+	}
+	if input.CheckOutDistanceM > s.rules.MaxDistanceMeters {
+		result.Status = model.ComplianceStatusNonCompliant
+		result.AnomalyReasons = append(result.AnomalyReasons, model.ReasonCheckOutTooFar)
 	}
 	return result, nil
 }

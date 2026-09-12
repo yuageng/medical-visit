@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"medical-visit/internal/domain/model"
+	"medical-visit/internal/domain/repository"
 	"medical-visit/internal/infrastructure/clock"
 
 	"github.com/google/uuid"
@@ -23,7 +24,7 @@ func TestSaveReport_CompletesCheckedOutVisit(t *testing.T) {
 		findByIDFunc: func(id uuid.UUID) (*model.Visit, error) {
 			return visit, nil
 		},
-		saveCallReportFunc: func(id uuid.UUID, report *model.CallReport, materialIDs []uuid.UUID) error {
+		saveCallReportFunc: func(id uuid.UUID, expectedVersion int, report *model.CallReport, materialIDs []uuid.UUID) error {
 			savedReport = report
 			savedMaterialIDs = materialIDs
 			visit.Status = model.VisitStatusCompleted
@@ -109,7 +110,7 @@ func TestSaveReport_AllowsUpdateAfterCompletion(t *testing.T) {
 	var saveCount int
 	visitRepo := &mockVisitRepository{
 		findByIDFunc: func(id uuid.UUID) (*model.Visit, error) { return visit, nil },
-		saveCallReportFunc: func(id uuid.UUID, report *model.CallReport, materialIDs []uuid.UUID) error {
+		saveCallReportFunc: func(id uuid.UUID, expectedVersion int, report *model.CallReport, materialIDs []uuid.UUID) error {
 			saveCount++
 			visit.CallReport = report
 			return nil
@@ -154,5 +155,50 @@ func TestSaveReport_RejectsMaterialIDsWhenNotDistributed(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("SaveReport() expected error, got nil")
+	}
+}
+
+func TestSaveReport_RejectsDuplicateMaterialIDs(t *testing.T) {
+	visitID, materialID := uuid.New(), uuid.New()
+	service := NewReportService(&mockVisitRepository{findByIDFunc: func(uuid.UUID) (*model.Visit, error) {
+		return &model.Visit{ID: visitID, Status: model.VisitStatusCheckedOut, Version: 2}, nil
+	}}, &mockMasterDataRepository{}, clock.FixedClock{Time: time.Now()})
+	_, err := service.SaveReport(SaveReportInput{VisitID: visitID, ConversationSummary: "summary", MaterialsDistributed: true, MaterialIDs: []uuid.UUID{materialID, materialID}})
+	if !errors.Is(err, ErrDuplicateMaterialID) {
+		t.Fatalf("error = %v, want ErrDuplicateMaterialID", err)
+	}
+}
+
+func TestSaveReport_MapsMaterialStateConflict(t *testing.T) {
+	visitID, materialID := uuid.New(), uuid.New()
+	service := NewReportService(&mockVisitRepository{
+		findByIDFunc: func(uuid.UUID) (*model.Visit, error) {
+			return &model.Visit{ID: visitID, Status: model.VisitStatusCheckedOut, Version: 3}, nil
+		},
+		saveCallReportFunc: func(uuid.UUID, int, *model.CallReport, []uuid.UUID) error {
+			return repository.ErrMaterialStateConflict
+		},
+	}, &mockMasterDataRepository{findAcademicMaterialsByIDsFunc: func([]uuid.UUID) ([]*model.AcademicMaterial, error) {
+		return []*model.AcademicMaterial{{ID: materialID, Active: true}}, nil
+	}}, clock.FixedClock{Time: time.Now()})
+	_, err := service.SaveReport(SaveReportInput{VisitID: visitID, ConversationSummary: "summary", MaterialsDistributed: true, MaterialIDs: []uuid.UUID{materialID}})
+	if !errors.Is(err, ErrMaterialNotActive) {
+		t.Fatalf("error = %v, want ErrMaterialNotActive", err)
+	}
+}
+
+func TestSaveReport_MapsConcurrentConflict(t *testing.T) {
+	visitID := uuid.New()
+	service := NewReportService(&mockVisitRepository{
+		findByIDFunc: func(uuid.UUID) (*model.Visit, error) {
+			return &model.Visit{ID: visitID, Status: model.VisitStatusCheckedOut, Version: 3}, nil
+		},
+		saveCallReportFunc: func(uuid.UUID, int, *model.CallReport, []uuid.UUID) error {
+			return repository.ErrVisitStateConflict
+		},
+	}, &mockMasterDataRepository{}, clock.FixedClock{Time: time.Now()})
+	_, err := service.SaveReport(SaveReportInput{VisitID: visitID, ConversationSummary: "summary"})
+	if !errors.Is(err, ErrReportConflict) {
+		t.Fatalf("error = %v, want ErrReportConflict", err)
 	}
 }

@@ -1,11 +1,14 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	"medical-visit/internal/domain/repository"
 )
+
+var ErrInvalidDashboardMonth = errors.New("invalid dashboard month")
 
 // MonthlyProductStat 月度产品拜访统计。
 type MonthlyProductStat struct {
@@ -29,7 +32,7 @@ func NewDashboardService(visitRepo repository.VisitRepository) *DashboardService
 func (s *DashboardService) MonthlyVisitsByProduct(month string) ([]MonthlyProductStat, error) {
 	start, err := time.Parse("2006-01", month)
 	if err != nil {
-		return nil, fmt.Errorf("invalid month, expected YYYY-MM: %w", err)
+		return nil, fmt.Errorf("%w, expected YYYY-MM: %v", ErrInvalidDashboardMonth, err)
 	}
 	end := start.AddDate(0, 1, 0)
 

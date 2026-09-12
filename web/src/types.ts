@@ -27,6 +27,9 @@ export interface Visit {
   check_in_longitude?: number
   check_in_distance_m?: number
   checked_out_at?: string
+  check_out_latitude?: number
+  check_out_longitude?: number
+  check_out_distance_m?: number
   duration_seconds?: number
   compliance_status: ComplianceStatus
   anomaly_reasons?: AnomalyReason[]
@@ -48,6 +51,12 @@ export interface CheckInRequest {
   latitude: number
   longitude: number
   check_in_time: string
+}
+
+export interface CheckOutRequest {
+  latitude: number
+  longitude: number
+  check_out_time: string
 }
 
 export interface SaveReportRequest {

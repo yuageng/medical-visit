@@ -37,8 +37,8 @@ func main() {
 		log.Println("Auto migration completed")
 	}
 
-	// 初始化路由（带依赖注入），传入环境配置的签到距离阈值。
-	rules := compliance.Rules{MaxDistanceMeters: cfg.Compliance.MaxDistanceMeters}
+	// 初始化路由（带依赖注入），传入环境配置的合规阈值。
+	rules := compliance.Rules{MinDurationSeconds: cfg.Compliance.MinDurationSeconds, MaxDistanceMeters: cfg.Compliance.MaxDistanceMeters}
 	router := http.SetupRouterWithDependencies(db, rules)
 
 	// 启动服务器

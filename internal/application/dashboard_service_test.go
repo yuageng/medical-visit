@@ -45,8 +45,8 @@ func TestMonthlyVisitsByProduct_InvalidMonth(t *testing.T) {
 	}}
 
 	_, err := NewDashboardService(repo).MonthlyVisitsByProduct("2026/09")
-	if err == nil {
-		t.Fatal("expected invalid month error")
+	if !errors.Is(err, ErrInvalidDashboardMonth) {
+		t.Fatalf("error = %v, want ErrInvalidDashboardMonth", err)
 	}
 	if called {
 		t.Fatal("repository should not be called for invalid month")

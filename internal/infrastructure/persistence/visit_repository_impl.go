@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 // visitRepositoryImpl 拜访仓储实现
@@ -55,9 +56,59 @@ func (r *visitRepositoryImpl) CheckIn(visitID uuid.UUID, expectedVersion int, vi
 	return nil
 }
 
+// CheckOut 使用状态和版本条件更新，避免并发重复签退。
+func (r *visitRepositoryImpl) CheckOut(visitID uuid.UUID, expectedVersion int, visit *model.Visit) error {
+	updates := map[string]interface{}{
+		"status":               visit.Status,
+		"checked_out_at":       visit.CheckedOutAt,
+		"check_out_latitude":   visit.CheckOutLatitude,
+		"check_out_longitude":  visit.CheckOutLongitude,
+		"check_out_distance_m": visit.CheckOutDistanceM,
+		"duration_seconds":     visit.DurationSeconds,
+		"compliance_status":    visit.ComplianceStatus,
+		"anomaly_reasons":      visit.AnomalyReasons,
+		"version":              expectedVersion + 1,
+		"updated_at":           visit.UpdatedAt,
+	}
+	result := r.db.Model(&model.Visit{}).
+		Where("id = ? AND status = ? AND version = ?", visitID, model.VisitStatusCheckedIn, expectedVersion).
+		Updates(updates)
+	if result.Error != nil {
+		return fmt.Errorf("failed to check out visit: %w", result.Error)
+	}
+	if result.RowsAffected != 1 {
+		return repository.ErrVisitStateConflict
+	}
+	return nil
+}
+
 // SaveCallReport 在单个事务中保存报告、资料关联并推进拜访状态。
-func (r *visitRepositoryImpl) SaveCallReport(visitID uuid.UUID, report *model.CallReport, materialIDs []uuid.UUID) error {
+func (r *visitRepositoryImpl) SaveCallReport(visitID uuid.UUID, expectedVersion int, report *model.CallReport, materialIDs []uuid.UUID) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 串行化同一拜访的报告写入，并在修改报告前校验调用方读取到的版本。
+		var visit model.Visit
+		lockResult := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND status IN ? AND version = ?", visitID, []model.VisitStatus{model.VisitStatusCheckedOut, model.VisitStatusCompleted}, expectedVersion).
+			First(&visit)
+		if errors.Is(lockResult.Error, gorm.ErrRecordNotFound) {
+			return repository.ErrVisitStateConflict
+		}
+		if lockResult.Error != nil {
+			return fmt.Errorf("failed to lock visit for report: %w", lockResult.Error)
+		}
+
+		if len(materialIDs) > 0 {
+			var activeMaterials []model.AcademicMaterial
+			if err := tx.Clauses(clause.Locking{Strength: "SHARE"}).
+				Where("id IN ? AND active = TRUE", materialIDs).
+				Find(&activeMaterials).Error; err != nil {
+				return fmt.Errorf("failed to revalidate academic materials: %w", err)
+			}
+			if len(activeMaterials) != len(materialIDs) {
+				return repository.ErrMaterialStateConflict
+			}
+		}
+
 		var existing model.CallReport
 		err := tx.Where("visit_id = ?", visitID).First(&existing).Error
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -91,8 +142,8 @@ func (r *visitRepositoryImpl) SaveCallReport(visitID uuid.UUID, report *model.Ca
 			}
 		}
 
-		updates := map[string]interface{}{"status": model.VisitStatusCompleted, "version": gorm.Expr("version + 1"), "updated_at": report.UpdatedAt}
-		result := tx.Model(&model.Visit{}).Where("id = ? AND status IN ?", visitID, []model.VisitStatus{model.VisitStatusCheckedOut, model.VisitStatusCompleted}).Updates(updates)
+		updates := map[string]interface{}{"status": model.VisitStatusCompleted, "version": expectedVersion + 1, "updated_at": report.UpdatedAt}
+		result := tx.Model(&model.Visit{}).Where("id = ? AND status IN ? AND version = ?", visitID, []model.VisitStatus{model.VisitStatusCheckedOut, model.VisitStatusCompleted}, expectedVersion).Updates(updates)
 		if result.Error != nil {
 			return fmt.Errorf("failed to complete visit: %w", result.Error)
 		}
@@ -109,7 +160,7 @@ func (r *visitRepositoryImpl) MonthlyProductStats(start, end time.Time) ([]repos
 	err := r.db.Table("visits AS v").
 		Select("v.product_id, p.name AS product_name, COUNT(*) AS visit_count, COUNT(*) FILTER (WHERE v.compliance_status = ?) AS normal_count, COUNT(*) FILTER (WHERE v.compliance_status = ?) AS abnormal_count", model.ComplianceStatusCompliant, model.ComplianceStatusNonCompliant).
 		Joins("JOIN products AS p ON p.id = v.product_id").
-		Where("v.checked_out_at >= ? AND v.checked_out_at < ? AND v.status IN ?", start, end, []model.VisitStatus{model.VisitStatusCheckedOut, model.VisitStatusCompleted}).
+		Where("v.checked_out_at >= ? AND v.checked_out_at < ? AND v.status IN ? AND v.compliance_status IN ?", start, end, []model.VisitStatus{model.VisitStatusCheckedOut, model.VisitStatusCompleted}, []model.ComplianceStatus{model.ComplianceStatusCompliant, model.ComplianceStatusNonCompliant}).
 		Group("v.product_id, p.name").
 		Order("visit_count DESC, p.name ASC").
 		Scan(&stats).Error
@@ -129,6 +180,7 @@ func (r *visitRepositoryImpl) FindByID(id uuid.UUID) (*model.Visit, error) {
 		Preload("Department").
 		Preload("Product").
 		Preload("CallReport").
+		Preload("CallReport.Materials").
 		First(&visit, "id = ?", id).Error
 
 	if err != nil {
