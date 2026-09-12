@@ -1,0 +1,70 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: medical-visit-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-medical_visit}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-medical_visit_password}
+      POSTGRES_DB: ${DB_NAME:-medical_visit}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - medical-visit
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: medical-visit-api
+    restart: unless-stopped
+    environment:
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-medical_visit}
+      DB_PASSWORD: ${DB_PASSWORD:-medical_visit_password}
+      DB_NAME: ${DB_NAME:-medical_visit}
+      DB_SSLMODE: disable
+      AUTO_MIGRATE: "true"
+      COMPLIANCE_MIN_DURATION_SECONDS: ${COMPLIANCE_MIN_DURATION_SECONDS:-300}
+      COMPLIANCE_MAX_DISTANCE_METERS: ${COMPLIANCE_MAX_DISTANCE_METERS:-500}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://localhost:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - medical-visit
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    container_name: medical-visit-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-80}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - medical-visit
+
+volumes:
+  postgres_data:
+
+networks:
+  medical-visit:
+    driver: bridge
