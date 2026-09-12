@@ -13,8 +13,28 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
 
-  const openVisit = (visit: Visit) => { setSelectedVisit(visit); setPage('detail') }
-  const onCreated = (visit: Visit) => { setVisits((items) => [visit, ...items]); setSelectedVisit(visit); setPage('detail'); setToast('拜访计划已创建') }
+  const openVisit = async (visit: Visit) => {
+    try {
+      const latestVisit = await api.getVisit(visit.id)
+      setSelectedVisit(latestVisit)
+      setVisits((items) => items.map((item) => item.id === latestVisit.id ? latestVisit : item))
+    } catch {
+      setSelectedVisit(visit)
+    }
+    setPage('detail')
+  }
+  const onCreated = async (visit: Visit) => {
+    try {
+      const latestVisit = await api.getVisit(visit.id)
+      setVisits((items) => [latestVisit, ...items])
+      setSelectedVisit(latestVisit)
+    } catch {
+      setVisits((items) => [visit, ...items])
+      setSelectedVisit(visit)
+    }
+    setPage('detail')
+    setToast('拜访计划已创建')
+  }
   const updateVisit = (visit: Visit) => { setSelectedVisit(visit); setVisits((items) => items.map((item) => item.id === visit.id ? visit : item)); setToast('拜访状态已更新') }
   const openFirstVisit = () => { if (visits[0]) { setSelectedVisit(visits[0]); setPage('detail') } else { setToast('暂无拜访记录，请先创建拜访') } }
   useEffect(() => { api.health().then(() => setApiOnline(true)).catch(() => setApiOnline(false)) }, [])
@@ -58,7 +78,7 @@ function StatusBadge({ status, compliance }: { status: string; compliance?: stri
 function LoadingState() { return <div className="loading"><RefreshCw size={18} className="spin" />正在加载数据…</div> }
 function EmptyState({ text }: { text: string }) { return <div className="empty"><ClipboardList size={28} /><strong>{text}</strong><span>当前没有可展示的记录</span></div> }
 
-function Dashboard({ visits, onOpenVisit }: { visits: Visit[]; onOpenVisit: (visit: Visit) => void }) {
+function Dashboard({ visits, onOpenVisit }: { visits: Visit[]; onOpenVisit: (visit: Visit) => void | Promise<void> }) {
   const [month, setMonth] = useState('2026-09'); const [data, setData] = useState<DashboardResponse | null>(null); const [loading, setLoading] = useState(false); const [error, setError] = useState('')
   useEffect(() => { setLoading(true); api.dashboard(month).then((result) => { setError(''); setData(result) }).catch(() => { setError('Dashboard 数据加载失败，请检查后端服务'); setData({ month, items: [] }) }).finally(() => setLoading(false)) }, [month])
   const total = data?.items.reduce((sum, item) => sum + item.visit_count, 0) ?? 0; const normal = data?.items.reduce((sum, item) => sum + item.normal_count, 0) ?? 0; const abnormal = data?.items.reduce((sum, item) => sum + item.abnormal_count, 0) ?? 0; const max = Math.max(...(data?.items.map((item) => item.visit_count) ?? [1]), 1)
